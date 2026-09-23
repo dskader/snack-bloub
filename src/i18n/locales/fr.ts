@@ -167,7 +167,8 @@ export default {
     hexagone: 'Hexagone',
     nuage: 'Nuage',
     goutte: 'Goutte',
-    snack: 'Tête Snack'
+    snack: 'Tête Snack',
+    'snack-sans-bouche': 'Tête Snack sans bouche'
   },
 
   colors: {

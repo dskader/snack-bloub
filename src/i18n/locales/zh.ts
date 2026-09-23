@@ -145,7 +145,8 @@ const zh: typeof fr = {
     hexagone: '六边形',
     nuage: '云朵',
     goutte: '水滴',
-    snack: 'Snack 头像'
+    snack: 'Snack 头像',
+    'snack-sans-bouche': 'Snack 头像（无嘴）'
   },
 
   colors: {

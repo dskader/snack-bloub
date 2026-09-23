@@ -16,7 +16,7 @@ import {
   type DotRender
 } from './decor'
 import { EYE_H, EYE_SPLIT, EYE_W, REST_GAZE, type HeadGaze } from './face'
-import { SNACK_HEAD } from './head'
+import type { BotHead, HeadMouth } from './head'
 import { TAU, clamp, createRng, easings, lerp } from './math'
 import {
   circle,
@@ -215,8 +215,11 @@ export interface StateDef {
    *
    * Seulement la ou le decor ne suppose pas un corps rond : les anneaux d'`orbit` et
    * les particules de `burst` sont traces autour de la boule, et y restent.
+   *
+   * `head` est la tete en presence : une variante qui fait mordre la machoire (`chomp`)
+   * lit `head.mouth` pour savoir s'il y en a une.
    */
-  headPose?(local: number): Pose
+  headPose?(local: number, head: BotHead): Pose
 }
 
 /** Onde de pulsation qui parcourt les trois points de gauche a droite. */
@@ -544,11 +547,15 @@ function cookie(t: number, at: Point): DotRender[] {
   ]
 }
 
-/** Sur la tete, les miettes partent des pointes du zigzag, bords exclus. */
-const MOUTH_TIPS = SNACK_HEAD.mouthTop.slice(1, -1)
-const fromMouth = (u: number) => MOUTH_TIPS[Math.floor(u * MOUTH_TIPS.length)]!
-/** Sans tete, du bas de la face. */
+/** Sur une tete a bouche, les miettes partent des pointes du zigzag, bords exclus. */
+const fromMouth = (mouth: HeadMouth) => {
+  const tips = mouth.top.slice(1, -1)
+  return (u: number) => tips[Math.floor(u * tips.length)]!
+}
+/** Sans bouche, du bas de la face. */
 const fromChin = (u: number) => ({ x: (u * 2 - 1) * 0.55, y: 0.35 })
+/** Sur la tete sans bouche, du bas du cote ou elle regarde. */
+const fromCheek = (u: number) => ({ x: 0.1 + u * 0.6, y: 0.3 })
 
 /** Yeux pendant `chomp` : un peu plus grands a l'ouverture, plisses au claquement. */
 function chompEyes(t: number, jaw: number, impact: number): [EyeCfg, EyeCfg] {
@@ -568,15 +575,24 @@ function chompBall(t: number): Pose {
   })
 }
 
-function chompHead(t: number): Pose {
+function chompHead(t: number, head: BotHead): Pose {
   const { jaw, impact } = bite(t)
+  if (!head.mouth) {
+    // sans machoire, la tete mord comme la boule : elle s'etire puis s'ecrase
+    return base({
+      sil: circle(1, { sx: 1 - 0.03 * jaw + 0.05 * impact, sy: 1 + 0.05 * jaw - 0.05 * impact }),
+      offY: 0.015 * impact,
+      eyes: chompEyes(t, jaw, impact),
+      dots: [...cookie(t, { x: 1.12, y: 0.22 }), ...crumbs(t, fromCheek)]
+    })
+  }
   return base({
     sil: circle(1, { sx: 1 + 0.03 * impact - 0.01 * jaw, sy: 1 - 0.035 * impact }),
     offY: 0.015 * impact,
     eyes: chompEyes(t, jaw, impact),
     jaw,
     // au coin droit de la bouche, la ou le zigzag rejoint le bord
-    dots: [...cookie(t, { x: 1.16, y: 0.12 }), ...crumbs(t, fromMouth)]
+    dots: [...cookie(t, { x: 1.16, y: 0.12 }), ...crumbs(t, fromMouth(head.mouth))]
   })
 }
 
@@ -596,7 +612,7 @@ export const STATES: StateDef[] = [
      * Snack croque : trois bouchees qui s'ouvrent, tiennent et claquent, des miettes a
      * chaque claquement, puis une mastication satisfaite. Pas un etat de la video : il
      * est CHOISI, pour la tete Snack dont la machoire s'ouvre vraiment. Sur une autre
-     * forme, le corps s'etire et s'ecrase a la place.
+     * forme, et sur la tete sans bouche, le corps s'etire et s'ecrase a la place.
      */
     id: 'chomp',
     duration: 2.6,
