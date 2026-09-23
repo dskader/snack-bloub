@@ -123,6 +123,9 @@ function debordement(state: StateId, radii: number[], expr: (typeof EXPRESSIONS)
 const CORPS_DE_BASE = STATES.filter((s) => s.baseBody).map((s) => s.id)
 /** Les autres : leur silhouette EST l'animation, relevee sur la video. */
 const SILHOUETTE_MESUREE = STATES.filter((s) => !s.baseBody).map((s) => s.id)
+/** Ceux ou une TETE tient le corps : les corps de base, plus les etats a variante de tete. */
+const CORPS_DE_TETE = STATES.filter((s) => s.baseBody || s.headPose).map((s) => s.id)
+const TETES = SHAPES.filter((f) => f.head)
 
 describe('formes du personnalisateur', () => {
   // 680 combinaisons x 60 instants x deux contours : le test le plus lourd du depot, et le
@@ -131,6 +134,17 @@ describe('formes du personnalisateur', () => {
     const fautifs: string[] = []
     for (const state of CORPS_DE_BASE) {
       for (const forme of SHAPES) {
+        for (const expr of [null, ...EXPRESSIONS]) {
+          const sortie = debordement(state, forme.radii, expr)
+          if (sortie > 0.05) {
+            fautifs.push(`${state}/${forme.id}/${expr?.id ?? 'pose'} ${sortie.toFixed(1)}`)
+          }
+        }
+      }
+    }
+    // Une tete tient aussi le corps des etats a variante de tete
+    for (const state of CORPS_DE_TETE.filter((s) => !CORPS_DE_BASE.includes(s))) {
+      for (const forme of TETES) {
         for (const expr of [null, ...EXPRESSIONS]) {
           const sortie = debordement(state, forme.radii, expr)
           if (sortie > 0.05) {
@@ -168,7 +182,8 @@ describe('formes du personnalisateur', () => {
 
   /**
    * Les silhouettes relevees sur la video ne sont pas remplacables, donc la forme choisie
-   * ne doit pas les atteindre — ni leur corps, ni leurs yeux. `orbit` est le cas qui
+   * ne doit pas les atteindre — ni leur corps, ni leurs yeux. Seule exception, voulue : une
+   * TETE sur un etat qui declare sa variante de tete (`headPose`). `orbit` est le cas qui
    * compte : la marge de son oeil est plus serree que celle du cercle et elle est pourtant
    * juste, puisque relevee ainsi. Une regle de marge appliquee sans distinction la
    * deplacerait.
@@ -176,7 +191,8 @@ describe('formes du personnalisateur', () => {
   it("la forme choisie ne touche pas aux etats a silhouette mesuree", () => {
     for (const state of SILHOUETTE_MESUREE) {
       const nu = new BotEngine(R, state, null, null).sample(1)
-      for (const forme of SHAPES) {
+      const aVariante = !!STATES.find((s) => s.id === state)!.headPose
+      for (const forme of SHAPES.filter((f) => !(aVariante && f.head))) {
         const habille = new BotEngine(R, state, forme.radii, null).sample(1)
         expect(habille.eyes, `${state}/${forme.id}`).toEqual(nu.eyes)
         expect(habille.bodyPath).toBe(nu.bodyPath)
@@ -193,8 +209,9 @@ describe('formes du personnalisateur', () => {
    * lisait comme un defaut.
    */
   it('la taille des yeux ne depend pas de la forme', () => {
+    // une tete porte son propre visage (`BotHead.face`), tailles comprises
     const tailles = new Set(
-      SHAPES.map((f) =>
+      SHAPES.filter((f) => !f.head).map((f) =>
         new BotEngine(R, 'idle', f.radii, null)
           .sample(1)
           .eyes.map((y) => y.d)
@@ -310,6 +327,62 @@ describe('formes du personnalisateur', () => {
         `${forme.id} : morphs d expression`
       ).toBeLessThan(14)
     }
+  })
+
+  /**
+   * La bouche Snack est un trou du corps : elle n'existe que la ou la forme choisie
+   * remplace le corps, et nulle part ailleurs.
+   */
+  it('la bouche ne sort que sur la tete Snack, et seulement la ou elle tient le corps', () => {
+    const snack = SHAPE_BY_ID.get('snack')!.radii
+    for (const state of CORPS_DE_TETE) {
+      expect(new BotEngine(R, state, snack, null).sample(1).mouth, state).not.toBeNull()
+      for (const forme of SHAPES.filter((f) => f.id !== 'snack')) {
+        expect(new BotEngine(R, state, forme.radii, null).sample(1).mouth).toBeNull()
+      }
+    }
+    for (const state of STATES.map((s) => s.id).filter((s) => !CORPS_DE_TETE.includes(s))) {
+      expect(new BotEngine(R, state, snack, null).sample(1).mouth, state).toBeNull()
+    }
+  })
+
+  /**
+   * Le visage ancre sur la tete ne doit jamais tomber dans la bouche : les deux sont des
+   * trous du meme masque, donc un oeil qui la touche fusionne avec elle. La premiere
+   * version ajoutait l'ecart de chaque expression au neutre sans l'attenuer, et
+   * `effraye`, `curieux` ou `wide` y plongeaient.
+   */
+  it('aucun oeil ne touche la bouche de la tete Snack', () => {
+    const snack = SHAPE_BY_ID.get('snack')!.radii
+    const fautifs: string[] = []
+    for (const state of CORPS_DE_TETE) {
+      for (const expr of [null, ...EXPRESSIONS]) {
+        const e = new BotEngine(R, state, snack, expr)
+        for (let i = 0; i < INSTANTS; i++) {
+          const f = e.sample(i * PAS)
+          // `polyPath` n'emet que des `M`/`L` : les nombres vont par paires
+          const n = f.mouth!.d.match(/-?\d+\.?\d*/g)!.map(Number)
+          const bouche = Array.from({ length: n.length / 2 }, (_, k) => ({ x: n[2 * k]!, y: n[2 * k + 1]! }))
+          if (f.eyes.some((eye) => contourDeLOeil(eye).some((p) => dedans(bouche, p.x, p.y)))) {
+            fautifs.push(`${state}/${expr?.id ?? 'pose'} t=${(i * PAS).toFixed(2)}`)
+            break
+          }
+        }
+      }
+    }
+    expect(fautifs).toEqual([])
+  })
+
+  it('la bouche apparait en fondu avec le morph de forme, sans saut', () => {
+    const e = new BotEngine(R, 'idle', SHAPE_BY_ID.get('cercle')!.radii, null)
+    e.setShape(SHAPE_BY_ID.get('snack')!.radii, 0)
+    let avant = 0
+    for (let t = 0; t <= BotEngine.SHAPE_MORPH; t += 1 / 60) {
+      const alpha = e.sample(t).mouth?.alpha ?? 0
+      expect(alpha).toBeGreaterThanOrEqual(avant)
+      avant = alpha
+    }
+    expect(e.sample(BotEngine.SHAPE_MORPH + 0.01).mouth!.alpha).toBe(1)
   })
 
   /**

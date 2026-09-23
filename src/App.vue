@@ -54,7 +54,7 @@ import {
   type Cycle
 } from '@/bot/cycles'
 import { DEFAULT_EXPRESSION, EXPRESSION_BY_ID } from '@/bot/expressions'
-import { COLOR_BY_ID, DEFAULT_COLOR, DEFAULT_SHAPE, SHAPE_BY_ID } from '@/bot/skins'
+import { COLOR_BY_ID, DEFAULT_SHAPE, SHAPE_BY_ID } from '@/bot/skins'
 import { POSES, SEQUENCE, STATES, type StateId } from '@/bot/states'
 
 /**
@@ -438,8 +438,10 @@ const droite = computed(() => !nue.value && view.value !== 'reglages')
 
 /* ------------------------------------------------------------------- skins */
 
-const shape = ref(stored('forme', DEFAULT_SHAPE, (v) => SHAPE_BY_ID.has(v)))
-const color = ref(stored('couleur', DEFAULT_COLOR, (v) => COLOR_BY_ID.has(v)))
+// Premiere visite : la tete Snack. Les DEFAULT_* du moteur restent le cercle, qui
+// est la reference relevee sur la video (et ce que dessine le favicon).
+const shape = ref(stored('forme', 'snack', (v) => SHAPE_BY_ID.has(v)))
+const color = ref(stored('couleur', 'snack', (v) => COLOR_BY_ID.has(v)))
 const expression = ref(
   stored('expression', DEFAULT_EXPRESSION, (v) => EXPRESSION_BY_ID.has(v))
 )

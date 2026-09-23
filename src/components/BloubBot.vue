@@ -514,6 +514,7 @@ function dotAttrs(dot: BotFrame['dots'][number]) {
           :opacity="eye.alpha"
           fill="#000"
         />
+        <path v-if="frame.mouth" :d="frame.mouth.d" :opacity="frame.mouth.alpha" fill="#000" />
         <circle
           v-if="frame.notch"
           :cx="frame.notch.x"

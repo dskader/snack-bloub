@@ -412,8 +412,10 @@ const clef = (state: StateId, expr: string | null) => `${state}|${expr ?? ''}`
  * tableau et le moteur n'a pas a dependre de la prudence de ses appelants.
  */
 function batir(): Map<number[], Map<string, { x: number; y: number }>> {
+  // Une tete porte son propre visage (`BotHead.face`), pose la ou il doit etre : la
+  // corriger le deplacerait. Elle n'a donc pas d'entree, ce qui vaut zero.
   return new Map(
-  SHAPES.map((forme) => {
+  SHAPES.filter((forme) => !forme.head).map((forme) => {
     const par = new Map<string, { x: number; y: number }>()
     for (const def of STATES) {
       if (!def.baseBody) continue

@@ -1,17 +1,21 @@
 import { arcRender, type ArcRender, type DotRender } from './decor'
 import { blendExpression, type BotExpression } from './expressions'
 import { decalageDesYeux } from './eyefit'
-import { blinkScale, eyePoses, liveliness } from './face'
+import { EYE_H, EYE_W, REST_GAZE, blinkScale, eyePoses, liveliness } from './face'
 import { clamp, easings, lerp, r2 } from './math'
 import {
   blend,
   capsulePath,
   closedPath,
+  polyPath,
   radiusAtAngle,
   toPoints,
+  transformPoints,
   type Point,
   type Silhouette
 } from './shape'
+import { headRadii, mouthOf, type BotHead } from './head'
+import { HEAD_BY_RADII } from './skins'
 import { STATE_BY_ID, type Pose, type StateDef, type StateId } from './states'
 
 export interface RenderedEye {
@@ -30,6 +34,8 @@ export interface BotFrame {
   arcs: ArcRender[]
   notif: { x: number; y: number; r: number } | null
   notch: { x: number; y: number; r: number } | null
+  /** trou de la bouche, pour les formes qui en portent une (la tete Snack) */
+  mouth: { d: string; alpha: number } | null
 }
 
 /**
@@ -115,9 +121,17 @@ function blendPose(a: Pose, b: Pose, t: number): Pose {
     ],
     // la pastille appartient a un seul des deux etats, elle ne se melange pas
     notif: t < 0.5 ? a.notif : b.notif,
-    dotsBehind: t < 0.5 ? a.dotsBehind : b.dotsBehind
+    dotsBehind: t < 0.5 ? a.dotsBehind : b.dotsBehind,
+    jaw: lerp(a.jaw, b.jaw, t),
+    eyeShift: { x: lerp(a.eyeShift.x, b.eyeShift.x, t), y: lerp(a.eyeShift.y, b.eyeShift.y, t) }
   }
 }
+
+/** Tete en presence et son poids sur l'axe de la forme (0 = absente, 1 = pleine). */
+type TeteEnPresence = { head: BotHead; w: number } | null
+
+/** L'etat laisse-t-il la forme choisie tenir le corps ? Sa variante de tete aussi. */
+const corpsDe = (def: StateDef) => (def.baseBody || def.headPose ? 1 : 0)
 
 /**
  * Moteur sans horloge : `sample(t)` est une fonction pure du temps.
@@ -270,12 +284,27 @@ export class BotEngine {
     def: StateDef,
     t: number,
     shape: number[] | null,
-    expr: BotExpression | null
+    expr: BotExpression | null,
+    tete: TeteEnPresence
   ): Pose {
+    // Profil de la forme, machoire ouverte comme le demande la pose. L'ouverture
+    // s'ajoute en ECART au profil ferme de la tete, pondere par sa presence : pendant un
+    // morph de forme, la machoire s'ouvre a proportion de ce qui est deja la tete.
+    const profil = (p: Pose, radii: number[]) => {
+      if (!tete || p.jaw <= 0) return radii
+      const ouvert = headRadii(tete.head, p.jaw)
+      const ferme = tete.head.radii
+      return radii.map((r, i) => r + (ouvert[i]! - ferme[i]!) * tete.w)
+    }
     let pose = def.pose(t)
     if (def.baseBody && shape) {
       // on garde la pose (rotation, decalage, squash) et on n'echange que le profil
-      pose = { ...pose, sil: { ...pose.sil, radii: shape } }
+      pose = { ...pose, sil: { ...pose.sil, radii: profil(pose, shape) } }
+    }
+    if (def.headPose && shape && tete && tete.w > 0) {
+      const tetePose = def.headPose(t)
+      const sur = { ...tetePose, sil: { ...tetePose.sil, radii: profil(tetePose, shape) } }
+      pose = tete.w >= 1 ? sur : blendPose(pose, sur, tete.w)
     }
     if (def.baseFace && expr) {
       pose = { ...pose, gaze: expr.gaze, split: expr.split, eyes: expr.eyes }
@@ -338,6 +367,29 @@ export class BotEngine {
   }
 
   /**
+   * Tete en presence a l'instant `now`, et son poids. Elle entre et sort en fondu sur
+   * les deux axes qui la font exister : le morph de forme (vers ou depuis une forme qui
+   * en porte une) et le fondu d'etat (vers ou depuis un etat a corps de base). Meme
+   * lecture que `decalageAtTime` : sur les BORNES du morph, jamais sur le profil
+   * interpole. La bouche et l'ancrage du visage lisent ce MEME poids, donc ils bougent
+   * ensemble.
+   */
+  private headAt(now: number, corpsDeBase: number): TeteEnPresence {
+    const tete = this.headShape(now)
+    return tete && { head: tete.head, w: tete.w * corpsDeBase }
+  }
+
+  /** Tete en presence sur le seul axe de la forme, lue sur les bornes du morph. */
+  private headShape(now: number): TeteEnPresence {
+    const cur = this.shape ? HEAD_BY_RADII.get(this.shape) : undefined
+    const prev = this.shapePrev ? HEAD_BY_RADII.get(this.shapePrev) : undefined
+    const head = cur ?? prev
+    if (!head) return null
+    const k = easings.easeOutQuint(clamp((now - this.shapeAt) / BotEngine.SHAPE_MORPH))
+    return { head, w: lerp(prev ? 1 : 0, cur ? 1 : 0, k) }
+  }
+
+  /**
    * Repart sur `id` SANS etat precedent, comme un moteur neuf pose sur cet etat.
    *
    * C'est ce que veut dire « rembobiner » pour ce moteur. `setState` seul ne peut pas le
@@ -370,7 +422,7 @@ export class BotEngine {
     if (this.departFige) return this.departFige
     if (!this.prev) return null
     const prevDef = STATE_BY_ID.get(this.prev)!
-    return this.posed(prevDef, Math.max(0, now - this.tPrev), shape, expr)
+    return this.posed(prevDef, Math.max(0, now - this.tPrev), shape, expr, this.headShape(now))
   }
 
   /**
@@ -382,7 +434,7 @@ export class BotEngine {
     const def = STATE_BY_ID.get(this.cur)!
     const shape = this.shapeAtTime(now)
     const expr = this.exprAtTime(now)
-    const pose = this.posed(def, Math.max(0, now - this.tCur), shape, expr)
+    const pose = this.posed(def, Math.max(0, now - this.tCur), shape, expr, this.headShape(now))
     const since = now - this.tCur
     if (since >= def.morph) return pose
     const origine = this.origine(now, shape, expr)
@@ -426,7 +478,7 @@ export class BotEngine {
     const def = STATE_BY_ID.get(this.cur)!
     const shape = this.shapeAtTime(now)
     const expr = this.exprAtTime(now)
-    let pose = this.posed(def, Math.max(0, now - this.tCur), shape, expr)
+    let pose = this.posed(def, Math.max(0, now - this.tCur), shape, expr, this.headShape(now))
     let decalage = this.decalageAtTime(now, this.cur)
 
     // --- transition -------------------------------------------------------
@@ -436,6 +488,8 @@ export class BotEngine {
     // rejouable — relire une date d'avant la fin du fondu ne le retrouverait
     // plus. C'est l'optimisation qui parait innocente et qui casse tout.
     const origine = since < def.morph ? this.origine(now, shape, expr) : null
+    // La bouche n'existe que la ou la forme choisie tient le corps
+    let corpsDeBase = corpsDe(def)
     if (origine) {
       // Ease-out exponentiel : c'est la courbe mesuree sur la video. Le corps
       // n'a pas d'overshoot (seuls la pastille et l'ouverture des yeux en ont).
@@ -449,6 +503,7 @@ export class BotEngine {
       // le test est la pour le typage, pas pour un cas reel.
       const quitte = this.prev
       if (quitte) {
+        corpsDeBase = lerp(corpsDe(STATE_BY_ID.get(quitte)!), corpsDeBase, ratio)
         const avant = this.decalageAtTime(now, quitte)
         decalage = {
           x: lerp(avant.x, decalage.x, ratio),
@@ -462,16 +517,31 @@ export class BotEngine {
     const look = this.lookAtTime(now)
     const life = liveliness(now, { wander: alive ? look.wander : 0, blink: alive })
 
+    // Ancrage du visage de la tete : applique a la visee, APRES le suivi du pointeur
+    // (le regard qui suit tourne autour des yeux de la tete, pas de ceux de la boule)
+    // mais AVANT la derive et le tour, qui restent entiers.
+    const tete = this.headAt(now, corpsDeBase)
+    const ancre = tete?.head.face
+    const poids = tete?.w ?? 0
+    const ancree = (v: number, repos: number, cible: number) =>
+      ancre ? lerp(v, cible + (v - repos) * ancre.gain, poids) : v
+    const derive = ancre ? lerp(1, ancre.wander, poids) : 1
+
     const gaze = {
       // Les deux visees REMPLACENT celles de la pose au lieu de s'y ajouter (voir
       // `Look`), et le tour se retranche en chemin. La derive s'ajoute APRES le
       // melange, sinon la cible l'annulerait en meme temps que la pose — or elle
       // doit survivre a une tete tournee sans pointeur.
-      yaw: lerp(pose.gaze.yaw, look.yaw, look.mix) + life.dYaw - look.spin,
-      pitch: lerp(pose.gaze.pitch, look.pitch, look.mix) + life.dPitch,
+      yaw:
+        ancree(lerp(pose.gaze.yaw, look.yaw, look.mix), REST_GAZE.yaw, ancre?.gaze.yaw ?? 0) +
+        life.dYaw * derive -
+        look.spin,
+      pitch:
+        ancree(lerp(pose.gaze.pitch, look.pitch, look.mix), REST_GAZE.pitch, ancre?.gaze.pitch ?? 0) +
+        life.dPitch * derive,
       // le roulis, lui, ne suit rien : la tete du bot est penchee de -13deg dans
       // la video, et la faire rouler avec le curseur casse cette signature
-      roll: pose.gaze.roll + life.dRoll
+      roll: ancree(pose.gaze.roll, REST_GAZE.roll, ancre?.gaze.roll ?? 0) + life.dRoll * derive
     }
 
     // clignement declenche par le changement d'etat, en plus du calendrier
@@ -500,11 +570,25 @@ export class BotEngine {
 
     const eyes: RenderedEye[] = []
     if (pose.eyeAlpha > 0.01) {
-      const poses = eyePoses(gaze, R, pose.split)
+      const poses = eyePoses(gaze, R, pose.split * lerp(1, ancre?.split ?? 1, poids))
       for (let i = 0; i < 2; i++) {
         const e = poses[i]!
         if (e.depth <= 0.02) continue
-        const cfg = pose.eyes[i]!
+        const brut = pose.eyes[i]!
+        // taille sur la tete : au prorata du neutre, en amortissant ce qui le depasse
+        const taille = (v: number, neutre: number, k: number) => {
+          const ref = neutre * k
+          const sur = v * k
+          return lerp(v, sur > ref ? ref + (sur - ref) * ancre!.growth : sur, poids)
+        }
+        const cfg = ancre
+          ? {
+              ...brut,
+              w: taille(brut.w, EYE_W, ancre.w[i]!),
+              h: taille(brut.h, EYE_H, ancre.h),
+              tilt: (brut.tilt ?? 0) + ancre.tilt * poids
+            }
+          : brut
         const fit = bodyRadius(e.x, e.y)
         // Inclinaison propre de l'oeil : on compose le repere tangent avec une
         // rotation dans le plan de l'oeil (Basis x Rot). C'est ce qui permet des
@@ -519,9 +603,17 @@ export class BotEngine {
         // Le clignement s'applique APRES tout ca : c'est un ecrasement vertical
         // a l'ecran, pas le long de l'axe de la gelule.
         const k = blinkScale(Math.min(lid, cfg.open))
+        // Sur une tete, un oeil plus grand que le neutre grandit vers le haut, son bas
+        // remontant meme un peu : la bouche est juste en dessous, et grandir depuis le
+        // centre l'y ferait entrer.
+        const pousse = ancre
+          ? Math.max(0, cfg.h - EYE_H * lerp(1, ancre.h, poids)) * poids * R
+          : 0
+        const tx = e.x * fit + (offX + decalage.x + pose.eyeShift.x) * R - cx2 * pousse
+        const ty = e.y * fit + (offY + decalage.y + pose.eyeShift.y) * R - cy2 * pousse
         eyes.push({
           d: capsulePath(cfg.w * R, cfg.h * R),
-          matrix: `matrix(${r2(ax)},${r2(ay * k)},${r2(cx2)},${r2(cy2 * k)},${r2(e.x * fit + (offX + decalage.x) * R)},${r2(e.y * fit + (offY + decalage.y) * R)})`,
+          matrix: `matrix(${r2(ax)},${r2(ay * k)},${r2(cx2)},${r2(cy2 * k)},${r2(tx)},${r2(ty)})`,
           alpha: pose.eyeAlpha * clamp(e.depth / 0.12)
         })
       }
@@ -540,6 +632,10 @@ export class BotEngine {
     const notch = pose.notif ? { x: nx, y: ny, r: pose.notif.notch * R } : null
 
     return {
+      mouth:
+        tete && poids > 0.01
+          ? { d: polyPath(transformPoints(mouthOf(tete.head, pose.jaw), sil, R)), alpha: poids }
+          : null,
       bodyPath,
       bodyAlpha: pose.bodyAlpha,
       eyes,

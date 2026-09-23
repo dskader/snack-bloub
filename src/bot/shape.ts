@@ -95,6 +95,21 @@ export function toPoints(s: Silhouette, scale: number, out: Point[] = []): Point
 }
 
 /**
+ * Meme transformation que `toPoints`, appliquee a des points quelconques poses dans
+ * le repere du profil : ce qui est perce DANS le corps (la bouche) suit ainsi sa
+ * rotation, son squash et son decalage.
+ */
+export function transformPoints(pts: Point[], s: Silhouette, scale: number): Point[] {
+  const cr = Math.cos(s.rot)
+  const sr = Math.sin(s.rot)
+  return pts.map((p) => {
+    const rx = p.x * cr - p.y * sr
+    const ry = p.x * sr + p.y * cr
+    return { x: (rx * s.sx + s.cx) * scale, y: (ry * s.sy + s.cy) * scale }
+  })
+}
+
+/**
  * Polyligne fermee -> cubiques Catmull-Rom.
  *
  * Avec 64 points les tangentes centrees suffisent largement : le contour est

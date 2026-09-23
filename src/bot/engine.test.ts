@@ -192,9 +192,10 @@ describe('etats', () => {
    * transition d'interface, choisie et non mesuree — il ne doit donc jamais
    * apparaitre dans le catalogue, et le rester est precisement ce qu'on verifie.
    */
-  it('garde les 14 etats de la video dans la sequence, et rien d autre', () => {
-    expect(SEQUENCE).toHaveLength(14)
-    expect(new Set(SEQUENCE).size).toBe(14)
+  it('garde les 14 etats de la video et `chomp` dans la sequence, et rien d autre', () => {
+    expect(SEQUENCE).toHaveLength(15)
+    expect(new Set(SEQUENCE).size).toBe(15)
+    expect(SEQUENCE).toContain('chomp')
     for (const id of SEQUENCE) expect(STATES.some((s) => s.id === id), id).toBe(true)
   })
 
@@ -541,3 +542,63 @@ describe('changement d etat pendant un fondu', () => {
     expect(new Set(images.slice(-12)).size).toBeGreaterThan(1)
   })
 })
+
+describe('tete Snack', () => {
+  const snack = SHAPE_BY_ID.get('snack')!.radii
+  const tete = (id: StateId) => new BotEngine(100, id, snack)
+
+  it('croque vraiment : la machoire ouverte allonge la silhouette et ouvre la bouche', () => {
+    const e = tete('chomp')
+    const ferme = e.sample(0.05)
+    // premiere bouchee grande ouverte
+    const ouvert = e.sample(0.36)
+    expect(footprint(ouvert.bodyPath).h - footprint(ferme.bodyPath).h).toBeGreaterThan(0.2)
+    const bas = (d: string) => Math.max(...d.match(/-?\d+\.?\d*/g)!.map(Number).filter((_, i) => i % 2 === 1))
+    expect(bas(ouvert.mouth!.d) - bas(ferme.mouth!.d)).toBeGreaterThan(15)
+    // et se referme au claquement
+    expect(footprint(e.sample(0.55).bodyPath).h).toBeCloseTo(footprint(ferme.bodyPath).h, 1)
+  })
+
+  it('garde la silhouette de la tete sur les etats a variante de tete', () => {
+    const repos = footprint(tete('idle').sample(1).bodyPath)
+    for (const id of STATES.filter((s) => s.headPose && !s.baseBody).map((s) => s.id)) {
+      const f = tete(id).sample(POSES_TETE)
+      expect(f.eyes, id).toHaveLength(2)
+      expect(f.mouth, id).not.toBeNull()
+      // la machoire peut s'entrouvrir : on compare la largeur, que rien n'ouvre
+      expect(Math.abs(footprint(f.bodyPath).w - repos.w), id).toBeLessThan(0.08)
+    }
+  })
+
+  it('tient le decor dans le viewBox, sur la tete comme sur la boule', () => {
+    for (const s of STATES) {
+      for (const radii of [snack, null]) {
+        const e = new BotEngine(100, s.id, radii)
+        for (let t = 0; t < 3; t += 0.05) {
+          const f = e.sample(t)
+          for (const [x, y] of anchors(f.bodyPath)) {
+            expect(Math.max(Math.abs(x), Math.abs(y)), `${s.id} corps t=${t}`).toBeLessThan(158)
+          }
+          for (const d of f.dots) {
+            // les glyphes (« Z », « ! », miettes, biscuit) tiennent dans leur `r` a 1,1 pres
+            const bord = Math.max(Math.abs(d.x), Math.abs(d.y)) + d.r * 1.1
+            expect(bord, `${s.id} decor t=${t.toFixed(2)}`).toBeLessThan(158)
+          }
+        }
+      }
+    }
+  })
+
+  it('reste une fonction pure du temps en croquant', () => {
+    const a = tete('chomp')
+    const b = tete('chomp')
+    const f = (e: BotEngine) => JSON.stringify(e.sample(1.23))
+    const premier = f(a)
+    a.sample(2.5)
+    expect(f(a)).toBe(premier)
+    expect(f(b)).toBe(premier)
+  })
+})
+
+/** Un instant ou chaque variante de tete est lancee, bien apres son fondu d'entree. */
+const POSES_TETE = 0.9

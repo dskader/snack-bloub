@@ -16,13 +16,15 @@ import {
   type DotRender
 } from './decor'
 import { EYE_H, EYE_SPLIT, EYE_W, REST_GAZE, type HeadGaze } from './face'
-import { TAU, clamp, easings } from './math'
+import { SNACK_HEAD } from './head'
+import { TAU, clamp, createRng, easings, lerp } from './math'
 import {
   circle,
   hullOfCircles,
   polyPath,
   profileFromPolygon,
   silhouette,
+  type Point,
   type Silhouette
 } from './shape'
 
@@ -61,6 +63,14 @@ export interface Pose {
   notif: { x: number; y: number; r: number; notch: number } | null
   /** true = le decor passe derriere le corps (particules de l'eclatement) */
   dotsBehind: boolean
+  /** ouverture de la machoire, 0 = fermee, 1 = grande ouverte ; sans tete, sans effet */
+  jaw: number
+  /**
+   * Deplacement ecran des deux yeux, en unites de boule. Sert aux poses de tete : leur
+   * regard est ancre au visage du logo, et c'est ainsi qu'elles regardent ailleurs
+   * sans faire pivoter la tete vers la bouche.
+   */
+  eyeShift: { x: number; y: number }
 }
 
 const pair = (w: number, h: number): [EyeCfg, EyeCfg] => [
@@ -82,6 +92,8 @@ function base(over: Partial<Pose> = {}): Pose {
     arcs: [],
     notif: null,
     dotsBehind: false,
+    jaw: 0,
+    eyeShift: { x: 0, y: 0 },
     ...over
   }
 }
@@ -149,6 +161,7 @@ function spinningTriangle(rot: number): Silhouette {
 
 export type StateId =
   | 'idle'
+  | 'chomp'
   | 'thinking'
   | 'wink'
   | 'wide'
@@ -194,6 +207,16 @@ export interface StateDef {
    */
   baseFace: boolean
   pose(local: number): Pose
+  /**
+   * Variante jouee quand le corps est une TETE (`head.ts`). Son profil est remplace
+   * par celui de la tete, qui garde donc sa silhouette, sa bouche et son visage ; les
+   * effets de l'etat se posent autour. Le moteur la fond avec `pose` selon le poids de
+   * la tete, donc changer de forme en plein etat morphe au lieu de sauter.
+   *
+   * Seulement la ou le decor ne suppose pas un corps rond : les anneaux d'`orbit` et
+   * les particules de `burst` sont traces autour de la boule, et y restent.
+   */
+  headPose?(local: number): Pose
 }
 
 /** Onde de pulsation qui parcourt les trois points de gauche a droite. */
@@ -201,6 +224,360 @@ function dotPulse(t: number, index: number): number {
   const p = ((((t - index * 0.5) / 1.5) % 1) + 1) % 1
   const k = p < 0.5 ? 0.5 - 0.5 * Math.cos(p * TAU) : 0
   return clamp(k * 2)
+}
+
+/* ------------------------------------------------------------ poses de tete */
+
+/*
+ * Rien de ce qui suit n'est releve sur la video : ce sont les variantes CHOISIES des
+ * etats quand le corps est la tete Snack, et l'etat `chomp`. Le visage y est celui du
+ * logo — `pair(EYE_W, EYE_H)` et `REST_GAZE` sont renvoyes sur ses yeux par l'ancrage
+ * de la tete — et le profil `circle(1)` des silhouettes est remplace par celui de la
+ * tete : seuls comptent leur rotation, leur squash et leur decalage.
+ *
+ * Le decor se tient au-dessus a droite, hors de l'oreille droite (coin a 0,97 / -0,85).
+ */
+
+/** Deux yeux identiques inclines en miroir, comme `pair` d'`expressions.ts`. */
+const mirrored = (w: number, h: number, tilt: number, open = 1): [EyeCfg, EyeCfg] => [
+  { w, h, open, tilt },
+  { w, h, open, tilt: -tilt }
+]
+
+/** Glyphe « Z » plein, demi-cote 1, trace a la taille voulue par `polyPath`. */
+const Z_GLYPH: Point[] = [
+  { x: -1, y: -1 },
+  { x: 1, y: -1 },
+  { x: 1, y: -0.6 },
+  { x: -0.34, y: 0.6 },
+  { x: 1, y: 0.6 },
+  { x: 1, y: 1 },
+  { x: -1, y: 1 },
+  { x: -1, y: 0.6 },
+  { x: 0.34, y: -0.6 },
+  { x: -1, y: -0.6 }
+]
+
+/** Miette : un quadrilatere irregulier, pas un disque, pour ne pas lire des bulles. */
+const CRUMB_GLYPH: Point[] = [
+  { x: -1, y: -0.75 },
+  { x: 0.85, y: -1 },
+  { x: 1, y: 0.8 },
+  { x: -0.8, y: 1 }
+]
+
+/** Bulle de pensee : trois points qui montent vers la droite, du plus petit au plus gros. */
+const THOUGHT = [
+  { x: 1.08, y: -0.92, r: 0.055 },
+  { x: 1.24, y: -1.1, r: 0.078 },
+  { x: 1.34, y: -1.3, r: 0.1 }
+]
+
+function thinkingHead(t: number): Pose {
+  const look = easings.easeOutCubic(clamp(t / 0.45))
+  const hum = 0.5 - 0.5 * Math.cos((t * TAU) / 1.3)
+  return base({
+    sil: circle(1, { rot: -0.035 * look }),
+    // le regard monte vers la bulle, en translation : la tete ne pivote pas
+    eyeShift: { x: 0.07 * look, y: -0.075 * look },
+    eyes: pair(EYE_W, EYE_H * 0.92),
+    // la bouche remue a peine, comme on mâchonne une idee
+    jaw: 0.06 * hum * look,
+    dots: THOUGHT.map((d, i) => {
+      const k = dotPulse(t, i)
+      const enter = easings.easeOutCubic(clamp((t - 0.15 - i * 0.2) / 0.3))
+      return {
+        x: d.x,
+        y: d.y + (1 - enter) * 0.08,
+        r: d.r * (0.6 + 0.4 * enter) * (1 + 0.2 * k),
+        opacity: enter * (0.55 + 0.45 * k)
+      }
+    })
+  })
+}
+
+/** Periode d'un souffle endormi ; les « Z » partent au meme rythme, decales d'un tiers. */
+const SLEEP_BREATH = 2.4
+
+function sleepHead(t: number): Pose {
+  const breath = 0.5 - 0.5 * Math.cos((t * TAU) / SLEEP_BREATH)
+  const settle = easings.easeOutCubic(clamp(t / 0.5))
+  const zs: DotRender[] = []
+  for (let k = 0; k < 3; k++) {
+    const start = (k * SLEEP_BREATH) / 3
+    if (t < start) continue
+    const p = ((t - start) % SLEEP_BREATH) / SLEEP_BREATH
+    const size = 0.045 + 0.06 * p
+    zs.push({
+      x: 1.04 + 0.36 * p + 0.05 * Math.sin(p * TAU),
+      y: -0.78 - 0.6 * p,
+      r: size,
+      d: polyPath(Z_GLYPH, size),
+      rot: -12 + 10 * Math.sin(p * TAU),
+      opacity: Math.sin(p * Math.PI)
+    })
+  }
+  return base({
+    // la tete s'affaisse un peu et respire
+    sil: circle(1, { sy: 1 + 0.03 * breath, sx: 1 - 0.012 * breath }),
+    offY: 0.02 * settle,
+    // yeux fermes : `open` a 0, le meme ecrasement que le clignement
+    eyes: [
+      { w: EYE_W * 1.15, h: EYE_H, open: 1 - settle },
+      { w: EYE_W * 1.15, h: EYE_H, open: 1 - settle }
+    ],
+    // ronflement : la machoire s'entrouvre a l'inspiration
+    jaw: 0.14 * breath * settle,
+    dots: zs
+  })
+}
+
+function playHead(t: number): Pose {
+  const fade = clamp(t / 0.35) * clamp((2.2 - t) / 0.5)
+  // petits sauts en rythme, deux par seconde
+  const beat = Math.abs(Math.sin((t * Math.PI) / 0.5))
+  const hop = beat * fade
+  const land = (1 - beat) * fade
+  return base({
+    sil: circle(1, {
+      rot: 0.07 * Math.sin((t * TAU) / 1) * fade,
+      sx: 1 + 0.02 * land,
+      sy: 1 - 0.03 * land
+    }),
+    offY: -0.07 * hop,
+    eyes: mirrored(EYE_W * 1.1, EYE_H * lerp(1, 0.45, fade), 14 * fade),
+    // elle chante en sautant
+    jaw: 0.35 * hop,
+    arcs: SWOOSH.map((s, i) => ({
+      id: `sw${i}`,
+      seed: { ...s, cx: 0.45 - t * 0.42 },
+      t,
+      opacity: fade
+    }))
+  })
+}
+
+/** Barre du « ! » de la tete : la capsule d'`alert`, reduite. */
+const ALERT_BAR = hullOfCircles(0, -0.2535, 0.1345, 0, 0.2535, 0.1345)
+const ALERT_TILT = 17.7
+
+function alertHead(t: number): Pose {
+  // accroupi, saut, reception : trois bosses qui ne se chevauchent pas
+  const crouch = t < 0.18 ? easings.easeOutCubic(t / 0.18) : clamp(1 - (t - 0.18) / 0.1)
+  const jump = t > 0.2 && t < 0.8 ? Math.sin((Math.PI * (t - 0.2)) / 0.6) : 0
+  const land = t > 0.8 && t < 1.05 ? Math.sin((Math.PI * (t - 0.8)) / 0.25) * 0.6 : 0
+  // le sursaut, puis tout se relache avant la fin mesuree de l'etat (2 s)
+  const pop = easings.easeOutCubic(clamp((t - 0.2) / 0.2))
+  const calm = clamp((t - 1.6) / 0.4)
+  // le « ! » jaillit avec un leger depassement, qui appartient a cet etat seul
+  const k = clamp((t - 0.25) / 0.3)
+  const sc = (easings.easeOutCubic(k) + Math.sin(k * Math.PI) * 0.18) * 0.55
+  const buzz = Math.sin(t * 2.5 * TAU) * 2.5 * pop
+  const tilt = ((ALERT_TILT + buzz) * Math.PI) / 180
+  const bx = 1.28
+  const by = -1.1
+  const bang = 1 - calm
+  return base({
+    sil: circle(1, {
+      sx: 1 + 0.05 * crouch - 0.03 * jump + 0.04 * land,
+      sy: 1 - 0.07 * crouch + 0.05 * jump - 0.05 * land
+    }),
+    offY: -0.13 * jump,
+    eyes: pair(EYE_W * 1.2, EYE_H * (1 + 0.45 * pop * (1 - 0.35 * calm))),
+    eyeShift: { x: 0, y: -0.03 * pop },
+    // bouche bee, qui se referme en meme temps que le « ! » s'efface
+    jaw: 0.55 * pop * (1 - calm),
+    dots:
+      sc > 0.001
+        ? [
+            {
+              x: bx,
+              y: by,
+              r: 0.13 * sc,
+              d: polyPath(ALERT_BAR, sc),
+              rot: (tilt * 180) / Math.PI,
+              opacity: bang
+            },
+            {
+              x: bx - Math.sin(tilt) * 0.58 * sc,
+              y: by + Math.cos(tilt) * 0.58 * sc,
+              r: 0.118 * sc,
+              opacity: bang
+            }
+          ]
+        : []
+  })
+}
+
+/* ---------------------------------------------------------------- croquer */
+
+/** Debut de chaque bouchee ; chacune s'ouvre, tient, puis claque. */
+const BITES = [0.1, 0.75, 1.4]
+const BITE_OPEN = 0.28
+const BITE_HOLD = 0.05
+const BITE_SNAP = 0.07
+/** instant ou la bouchee claque, depuis son debut */
+const BITE_SHUT = BITE_OPEN + BITE_HOLD + BITE_SNAP
+/** duree de l'ecrasement a l'impact, et de vie d'une miette */
+const IMPACT = 0.09
+const CRUMB_LIFE = 0.7
+/** apres la derniere bouchee : mastication, puis mine satisfaite */
+const CHEW_AT = BITES[BITES.length - 1]! + BITE_SHUT + 0.15
+
+/** Ouverture de la machoire et force de l'impact a l'instant `t`. */
+function bite(t: number): { jaw: number; impact: number } {
+  let jaw = 0
+  let impact = 0
+  for (const b of BITES) {
+    const u = t - b
+    if (u < 0) continue
+    if (u < BITE_OPEN) jaw = Math.max(jaw, easings.easeOutCubic(u / BITE_OPEN))
+    else if (u < BITE_OPEN + BITE_HOLD) jaw = 1
+    else if (u < BITE_SHUT) jaw = Math.max(jaw, 1 - ((u - BITE_OPEN - BITE_HOLD) / BITE_SNAP) ** 3)
+    else impact = Math.max(impact, Math.exp(-(u - BITE_SHUT) / IMPACT))
+  }
+  if (t > CHEW_AT) jaw = Math.max(jaw, 0.12 * Math.abs(Math.sin(((t - CHEW_AT) * TAU) / 0.6)))
+  return { jaw, impact }
+}
+
+/** Miettes tirees une fois pour toutes : deterministes, donc rejouables. */
+const CRUMB_RNG = createRng(0x5aac)
+const CRUMBS = BITES.flatMap((_, bouchee) =>
+  Array.from({ length: 7 }, () => ({
+    bouchee,
+    u: CRUMB_RNG(),
+    vx: (CRUMB_RNG() * 2 - 1) * 0.7,
+    vy: -0.5 - CRUMB_RNG() * 0.9,
+    size: 0.028 + CRUMB_RNG() * 0.03,
+    spin: (CRUMB_RNG() * 2 - 1) * 540
+  }))
+)
+const CRUMB_GRAVITY = 3.4
+
+/** Les miettes de toutes les bouchees ; `origin(u)` dit d'ou part chacune. */
+function crumbs(t: number, origin: (u: number) => Point): DotRender[] {
+  const out: DotRender[] = []
+  for (const c of CRUMBS) {
+    const s = t - (BITES[c.bouchee]! + BITE_SHUT)
+    if (s < 0 || s > CRUMB_LIFE) continue
+    const p = origin(c.u)
+    out.push({
+      x: p.x + c.vx * s,
+      y: p.y + c.vy * s + 0.5 * CRUMB_GRAVITY * s * s,
+      r: c.size,
+      d: polyPath(CRUMB_GLYPH, c.size),
+      rot: c.spin * s,
+      opacity: 1 - (s / CRUMB_LIFE) ** 2,
+      // eclaircies vers le fond : lisibles sur le corps comme a cote
+      depth: 0.45
+    })
+  }
+  return out
+}
+
+/*
+ * Le biscuit croque. Il se tient au coin de la bouche et perd un morceau a chaque
+ * claquement, du cote de la bouche ; la derniere bouchee l'avale. Ses couleurs sont
+ * fixes : c'est un objet pose devant le bot, pas une partie de lui.
+ */
+const COOKIE_R = 0.26
+const COOKIE = '#e9a94b'
+const COOKIE_CHIP = '#7a4a21'
+/** morceaux croques, en unites du rayon du biscuit, depuis son centre */
+const COOKIE_BITES = [
+  { x: -0.95, y: -0.2, r: 0.55 },
+  { x: -0.55, y: 0.35, r: 0.6 }
+]
+const COOKIE_CHIPS = [
+  { x: 0.3, y: -0.35, r: 0.13 },
+  { x: -0.2, y: 0.05, r: 0.11 },
+  { x: 0.35, y: 0.35, r: 0.12 },
+  { x: -0.55, y: -0.45, r: 0.1 }
+]
+const insideAny = (p: Point, holes: typeof COOKIE_BITES) =>
+  holes.some((h) => Math.hypot(p.x - h.x, p.y - h.y) < h.r)
+
+/** Contour du biscuit, rayon 1, apres les `n` premieres bouchees. */
+const COOKIE_SHAPES = [0, 1, 2].map((n) => {
+  const holes = COOKIE_BITES.slice(0, n)
+  const pts: Point[] = []
+  for (let i = 0; i < 72; i++) {
+    const a = (i / 72) * TAU
+    // bord legerement bossele, comme un vrai biscuit
+    const r = 1 + 0.05 * Math.sin(a * 7 + 0.6)
+    let p = { x: Math.cos(a) * r, y: Math.sin(a) * r }
+    // un point croque est ramene sur le bord du morceau : l'encoche est une morsure
+    for (const h of holes) {
+      const d = Math.hypot(p.x - h.x, p.y - h.y)
+      if (d < h.r) p = { x: h.x + ((p.x - h.x) / d) * h.r, y: h.y + ((p.y - h.y) / d) * h.r }
+    }
+    pts.push(p)
+  }
+  return { pts, chips: COOKIE_CHIPS.filter((c) => !insideAny(c, holes)) }
+})
+
+function cookie(t: number, at: Point): DotRender[] {
+  const enter = easings.easeOutCubic(clamp(t / 0.25))
+  const lastShut = BITES[BITES.length - 1]! + BITE_SHUT
+  // avale d'un coup a la derniere bouchee
+  const gone = clamp((t - lastShut + 0.03) / 0.06)
+  const scale = COOKIE_R * enter * (1 - gone)
+  if (scale <= 0.002) return []
+  const eaten = BITES.filter((b) => t >= b + BITE_SHUT).length
+  const shape = COOKIE_SHAPES[Math.min(eaten, COOKIE_SHAPES.length - 1)]!
+  // il remonte vers la bouche pendant qu'elle s'ouvre
+  const { jaw } = bite(t)
+  const x = at.x + (1 - enter) * 0.3 - 0.05 * jaw
+  const y = at.y - 0.03 * jaw
+  const rot = -8 + 6 * Math.sin(t * 3)
+  const c = Math.cos((rot * Math.PI) / 180)
+  const s = Math.sin((rot * Math.PI) / 180)
+  return [
+    { x, y, r: scale, d: polyPath(shape.pts, scale), rot, opacity: enter, color: COOKIE },
+    ...shape.chips.map((p) => ({
+      x: x + (p.x * c - p.y * s) * scale,
+      y: y + (p.x * s + p.y * c) * scale,
+      r: p.r * scale,
+      opacity: enter,
+      color: COOKIE_CHIP
+    }))
+  ]
+}
+
+/** Sur la tete, les miettes partent des pointes du zigzag, bords exclus. */
+const MOUTH_TIPS = SNACK_HEAD.mouthTop.slice(1, -1)
+const fromMouth = (u: number) => MOUTH_TIPS[Math.floor(u * MOUTH_TIPS.length)]!
+/** Sans tete, du bas de la face. */
+const fromChin = (u: number) => ({ x: (u * 2 - 1) * 0.55, y: 0.35 })
+
+/** Yeux pendant `chomp` : un peu plus grands a l'ouverture, plisses au claquement. */
+function chompEyes(t: number, jaw: number, impact: number): [EyeCfg, EyeCfg] {
+  const content = clamp((t - CHEW_AT) / 0.25)
+  const h = lerp(Math.max(0.3, 1 + 0.12 * jaw - 0.6 * impact), 0.45, content)
+  return mirrored(EYE_W * (1 + 0.1 * impact), EYE_H * h, 12 * content)
+}
+
+function chompBall(t: number): Pose {
+  const { jaw, impact } = bite(t)
+  return base({
+    // sans machoire, la boule s'etire a l'ouverture et s'ecrase au claquement
+    sil: circle(1, { sx: 1 - 0.03 * jaw + 0.05 * impact, sy: 1 + 0.06 * jaw - 0.06 * impact }),
+    offY: 0.02 * impact,
+    eyes: chompEyes(t, jaw, impact),
+    dots: [...cookie(t, { x: 1.02, y: 0.28 }), ...crumbs(t, fromChin)]
+  })
+}
+
+function chompHead(t: number): Pose {
+  const { jaw, impact } = bite(t)
+  return base({
+    sil: circle(1, { sx: 1 + 0.03 * impact - 0.01 * jaw, sy: 1 - 0.035 * impact }),
+    offY: 0.015 * impact,
+    eyes: chompEyes(t, jaw, impact),
+    jaw,
+    // au coin droit de la bouche, la ou le zigzag rejoint le bord
+    dots: [...cookie(t, { x: 1.16, y: 0.12 }), ...crumbs(t, fromMouth)]
+  })
 }
 
 export const STATES: StateDef[] = [
@@ -215,12 +592,32 @@ export const STATES: StateDef[] = [
   },
 
   {
+    /**
+     * Snack croque : trois bouchees qui s'ouvrent, tiennent et claquent, des miettes a
+     * chaque claquement, puis une mastication satisfaite. Pas un etat de la video : il
+     * est CHOISI, pour la tete Snack dont la machoire s'ouvre vraiment. Sur une autre
+     * forme, le corps s'etire et s'ecrase a la place.
+     */
+    id: 'chomp',
+    duration: 2.6,
+    // la derniere bouchee claque a 1.4 + 0.4, et son ecrasement est retombe 0.3 s plus tard
+    minDuration: 2.1,
+    morph: 0.4,
+    blinkIn: false,
+    baseFace: false,
+    baseBody: true,
+    pose: chompBall,
+    headPose: chompHead
+  },
+
+  {
     id: 'thinking',
     duration: 2.6,
     morph: 0.4,
     baseFace: false,
     baseBody: false,
     blinkIn: true,
+    headPose: thinkingHead,
     pose: (t) => {
       const mid = dotPulse(t, 1)
       // Les points lateraux sortent des flancs de la boule : dans la video ils
@@ -287,6 +684,7 @@ export const STATES: StateDef[] = [
     baseFace: false,
     baseBody: false,
     blinkIn: false,
+    headPose: alertHead,
     pose: (t) => {
       // Course mesuree : -0.087 -> +0.732 en 1.5 s, ease-in-out, micro-overshoot.
       const p = clamp(t / 1.5)
@@ -364,6 +762,7 @@ export const STATES: StateDef[] = [
     baseFace: false,
     baseBody: false,
     blinkIn: false,
+    headPose: sleepHead,
     pose: (t) =>
       base({
         // Rebond vertical mesure : +-0.19 autour de +0.11, periode 0.6 s.
@@ -412,6 +811,7 @@ export const STATES: StateDef[] = [
     baseFace: false,
     baseBody: false,
     blinkIn: true,
+    headPose: playHead,
     pose: (t) => {
       // Le triangle reste quasi immobile pendant que le bouquet le traverse.
       const fade = clamp(t / 0.35) * clamp((2.2 - t) / 0.5)
@@ -582,6 +982,8 @@ export const STATE_BY_ID = new Map(STATES.map((s) => [s.id, s]))
  */
 export const POSES: Record<StateId, number> = {
   idle: 1,
+  // premiere bouchee grande ouverte
+  chomp: 0.4,
   thinking: 1.1,
   wink: 0.8,
   wide: 0.8,
@@ -600,6 +1002,7 @@ export const POSES: Record<StateId, number> = {
 
 export const SEQUENCE: StateId[] = [
   'idle',
+  'chomp',
   'thinking',
   'wink',
   'wide',

@@ -116,6 +116,7 @@ const en: typeof fr = {
 
   states: {
     idle: 'Idle',
+    chomp: 'Chomp',
     thinking: 'Thinking',
     wink: 'Wink',
     wide: 'Wide eyes',
@@ -140,7 +141,8 @@ const en: typeof fr = {
     triangle: 'Triangle',
     hexagone: 'Hexagon',
     nuage: 'Cloud',
-    goutte: 'Droplet'
+    goutte: 'Droplet',
+    snack: 'Snack head'
   },
 
   colors: {
@@ -155,7 +157,8 @@ const en: typeof fr = {
     bleu: 'Blue',
     violet: 'Purple',
     rose: 'Pink',
-    gris: 'Grey'
+    gris: 'Grey',
+    snack: 'Snack blue'
   },
 
   expressions: {

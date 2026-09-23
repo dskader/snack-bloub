@@ -1,3 +1,4 @@
+import { SNACK_HEAD, type BotHead } from './head'
 import { PROFILE_SAMPLES } from './profiles'
 import {
   hullOfCircles,
@@ -6,6 +7,7 @@ import {
   superellipseProfile,
   unionOfCirclesProfile
 } from './shape'
+import { SNACK_BLUE } from './snack'
 
 /**
  * Formes et couleurs proposees par le personnalisateur du bot.
@@ -33,10 +35,12 @@ export type ShapeId =
   | 'hexagone'
   | 'nuage'
   | 'goutte'
+  | 'snack'
 
 export interface BotShape {
   id: ShapeId
   radii: number[]
+  head?: BotHead
 }
 
 /** Ramene le rayon maximal a `max` pour que toutes les formes pesent pareil a l'oeil. */
@@ -88,13 +92,23 @@ export const SHAPES: BotShape[] = [
   // 0deg : sommets a gauche et a droite, donc aretes du haut et du bas plates
   { id: 'hexagone', radii: regularPolygonProfile(6, 1.04, 0.26, 0) },
   { id: 'nuage', radii: cloud },
-  { id: 'goutte', radii: droplet }
+  { id: 'goutte', radii: droplet },
+  // Relevee sur le logo (`tools/extract-snack.py`), voir `head.ts`
+  { id: 'snack', radii: SNACK_HEAD.radii, head: SNACK_HEAD }
 ]
 
 // Map indexee par `string` et non par `ShapeId` : les appelants interrogent avec
 // une valeur relue du localStorage ou d'une prop, donc non validee.
 export const SHAPE_BY_ID = new Map<string, BotShape>(SHAPES.map((s) => [s.id, s]))
 export const DEFAULT_SHAPE = 'cercle'
+
+/**
+ * Tete d'un profil, cle par REFERENCE du tableau de rayons : c'est tout ce que le
+ * moteur recoit, et la convention deja suivie par `eyefit.ts`.
+ */
+export const HEAD_BY_RADII = new Map<number[], BotHead>(
+  SHAPES.flatMap((s) => (s.head ? [[s.radii, s.head] as const] : []))
+)
 
 export type ColorId =
   | 'encre'
@@ -109,6 +123,7 @@ export type ColorId =
   | 'violet'
   | 'rose'
   | 'gris'
+  | 'snack'
 
 export interface BotColor {
   id: ColorId
@@ -128,7 +143,8 @@ export const COLORS: BotColor[] = [
   { id: 'violet', hex: '#8b5cf6' },
   { id: 'rose', hex: '#e152b0' },
   { id: 'gris', hex: '#a3a3a3' },
-  { id: 'creme', hex: '#f1efe9' }
+  { id: 'creme', hex: '#f1efe9' },
+  { id: 'snack', hex: SNACK_BLUE }
 ]
 
 export const COLOR_BY_ID = new Map<string, BotColor>(COLORS.map((c) => [c.id, c]))

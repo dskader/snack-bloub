@@ -119,6 +119,7 @@ const zh: typeof fr = {
 
   states: {
     idle: '静止',
+    chomp: '大口咬',
     thinking: '思考',
     wink: '眨眼',
     wide: '睁大眼睛',
@@ -143,7 +144,8 @@ const zh: typeof fr = {
     triangle: '三角形',
     hexagone: '六边形',
     nuage: '云朵',
-    goutte: '水滴'
+    goutte: '水滴',
+    snack: 'Snack 头像'
   },
 
   colors: {
@@ -158,7 +160,8 @@ const zh: typeof fr = {
     bleu: '蓝色',
     violet: '紫色',
     rose: '粉色',
-    gris: '灰色'
+    gris: '灰色',
+    snack: 'Snack 蓝'
   },
 
   expressions: {

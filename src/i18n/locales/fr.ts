@@ -141,6 +141,7 @@ export default {
 
   states: {
     idle: 'Repos',
+    chomp: 'Croque',
     thinking: 'Réflexion',
     wink: "Clin d'œil",
     wide: 'Yeux écarquillés',
@@ -165,7 +166,8 @@ export default {
     triangle: 'Triangle',
     hexagone: 'Hexagone',
     nuage: 'Nuage',
-    goutte: 'Goutte'
+    goutte: 'Goutte',
+    snack: 'Tête Snack'
   },
 
   colors: {
@@ -180,7 +182,8 @@ export default {
     bleu: 'Bleu',
     violet: 'Violet',
     rose: 'Rose',
-    gris: 'Gris'
+    gris: 'Gris',
+    snack: 'Bleu Snack'
   },
 
   expressions: {
