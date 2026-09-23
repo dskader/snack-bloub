@@ -8,10 +8,12 @@ import {
   SNACK_OUTLINE,
   SNACK_OUTLINE_OPEN
 } from './snack'
+import { SNACK_NO_MOUTH_OUTLINE } from './snack-no-mouth'
 
 /**
- * Une TETE : une forme du personnalisateur qui porte son propre visage, une bouche
- * percee dans le corps et une machoire qui s'ouvre. Seule la tete Snack en est une.
+ * Une TETE : une forme du personnalisateur qui porte son propre visage, et parfois
+ * une bouche percee dans le corps avec une machoire qui s'ouvre. Les deux tetes
+ * Snack en sont : le logo, avec sa bouche en zigzag, et sa variante sans bouche.
  *
  * Tout est en unites de boule, dans le repere du profil : ce qui est perce dans le
  * corps suit donc sa rotation, son squash et son decalage.
@@ -56,15 +58,21 @@ export interface Jaw {
   tilt: number
 }
 
-export interface BotHead {
-  /** profil machoire fermee : c'est celui de la forme au catalogue */
-  radii: number[]
+/** Bouche percee dans une tete, et la machoire qui l'ouvre. */
+export interface HeadMouth {
   /** profils releves machoire ouverte, par ouverture croissante, 0 compris */
   open: Array<{ open: number; radii: number[] }>
   /** bords de la bouche de gauche a droite ; le bas suit la machoire */
-  mouthTop: Point[]
-  mouthBottom: Point[]
+  top: Point[]
+  bottom: Point[]
   jaw: Jaw
+}
+
+export interface BotHead {
+  /** profil machoire fermee : c'est celui de la forme au catalogue */
+  radii: number[]
+  /** absente : la tete n'a ni bouche ni machoire, `Pose.jaw` n'y fait rien */
+  mouth?: HeadMouth
   face: FaceAnchor
 }
 
@@ -76,8 +84,8 @@ export interface BotHead {
  */
 export function headRadii(head: BotHead, open: number): number[] {
   const o = clamp(open)
-  if (o <= 0) return head.radii
-  const steps = head.open
+  if (o <= 0 || !head.mouth) return head.radii
+  const steps = head.mouth.open
   let i = 1
   while (i < steps.length - 1 && steps[i]!.open < o) i++
   const a = steps[i - 1]!
@@ -87,21 +95,21 @@ export function headRadii(head: BotHead, open: number): number[] {
 }
 
 /** Point du bas de la bouche deplace avec la machoire ouverte a `open`. */
-export function jawPoint(head: BotHead, p: Point, open: number): Point {
+export function jawPoint(jaw: Jaw, p: Point, open: number): Point {
   const o = clamp(open)
-  const th = (head.jaw.tilt * o * Math.PI) / 180
+  const th = (jaw.tilt * o * Math.PI) / 180
   const c = Math.cos(th)
   const s = Math.sin(th)
-  const { x: px, y: py } = head.jaw.pivot
+  const { x: px, y: py } = jaw.pivot
   const dx = p.x - px
   const dy = p.y - py
-  return { x: c * dx - s * dy + px, y: s * dx + c * dy + py + head.jaw.drop * o }
+  return { x: c * dx - s * dy + px, y: s * dx + c * dy + py + jaw.drop * o }
 }
 
 /** Polygone de la bouche, machoire ouverte a `open`. */
-export function mouthOf(head: BotHead, open: number): Point[] {
-  const bas = open > 0 ? head.mouthBottom.map((p) => jawPoint(head, p, open)) : head.mouthBottom
-  return [...head.mouthTop, ...[...bas].reverse()]
+export function mouthOf(mouth: HeadMouth, open: number): Point[] {
+  const bas = open > 0 ? mouth.bottom.map((p) => jawPoint(mouth.jaw, p, open)) : mouth.bottom
+  return [...mouth.top, ...[...bas].reverse()]
 }
 
 /**
@@ -114,13 +122,15 @@ export function mouthOf(head: BotHead, open: number): Point[] {
  */
 export const SNACK_HEAD: BotHead = {
   radii: profileFromPolygon(SNACK_OUTLINE, 0, 0),
-  open: [
-    { open: 0, radii: profileFromPolygon(SNACK_OUTLINE, 0, 0) },
-    ...SNACK_OUTLINE_OPEN.map((s) => ({ open: s.open, radii: profileFromPolygon(s.outline, 0, 0) }))
-  ],
-  mouthTop: SNACK_MOUTH_TOP,
-  mouthBottom: SNACK_MOUTH_BOTTOM,
-  jaw: SNACK_JAW,
+  mouth: {
+    open: [
+      { open: 0, radii: profileFromPolygon(SNACK_OUTLINE, 0, 0) },
+      ...SNACK_OUTLINE_OPEN.map((s) => ({ open: s.open, radii: profileFromPolygon(s.outline, 0, 0) }))
+    ],
+    top: SNACK_MOUTH_TOP,
+    bottom: SNACK_MOUTH_BOTTOM,
+    jaw: SNACK_JAW
+  },
   face: {
     gaze: { yaw: -12.52, pitch: 26.12, roll: -14.98 },
     gain: 0.1,
@@ -130,5 +140,29 @@ export const SNACK_HEAD: BotHead = {
     h: 0.269 / EYE_H,
     growth: 0.45,
     tilt: 16.7
+  }
+}
+
+/**
+ * Tete Snack sans bouche : le logo en miroir, oreilles et regard tournes vers la
+ * droite, sans zigzag. Visage ajuste de la meme facon sur `SNACK_NO_MOUTH_EYES`
+ * (residuel sous 0,001 en position, 0,002 en taille et 0,3deg en inclinaison) : tete a
+ * yaw 13,25 / pitch 18,92 / roll 3,12, demi-ecart 10,42deg, gelules de 0,154 et
+ * 0,169 x 0,248 inclinees de -4,6deg.
+ *
+ * Sans bouche sous les yeux, le visage garde plus de son expression, de sa derive et
+ * de sa croissance que sur le logo ; la seule limite est le bord de la tete.
+ */
+export const SNACK_NO_MOUTH_HEAD: BotHead = {
+  radii: profileFromPolygon(SNACK_NO_MOUTH_OUTLINE, 0, 0),
+  face: {
+    gaze: { yaw: 13.25, pitch: 18.92, roll: 3.12 },
+    gain: 0.3,
+    wander: 0.6,
+    split: 10.42 / EYE_SPLIT,
+    w: [0.154 / EYE_W, 0.169 / EYE_W],
+    h: 0.248 / EYE_H,
+    growth: 0.7,
+    tilt: -4.6
   }
 }

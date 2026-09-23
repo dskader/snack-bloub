@@ -15,14 +15,20 @@ exterieur, donc on releve separement :
 
 Usage :
     python3 tools/extract-snack.py > src/bot/snack.ts
+    python3 tools/extract-snack.py --no-mouth > src/bot/snack-no-mouth.ts
+
+`--no-mouth` releve la variante sans bouche (tools/snack-no-mouth-reference.png) :
+un seul morceau, donc ni bouche ni machoire, seulement la silhouette et les yeux.
 """
 import math
+import sys
 
 import numpy as np
 from PIL import Image
 from scipy import ndimage
 
 SOURCE = 'tools/snack-logo-reference.png'
+SOURCE_NO_MOUTH = 'tools/snack-no-mouth-reference.png'
 # Rayon de la boule equivalente : la silhouette pleine est mise a l'echelle pour
 # avoir l'aire d'un disque de ce rayon, en unites de boule.
 AREA_R = 1.0
@@ -61,10 +67,113 @@ def rdp(pts, eps):
     return rdp(pts[: idx + 1], eps)[:-1] + rdp(pts[idx:], eps)
 
 
-def main():
-    im = np.asarray(Image.open(SOURCE).convert('RGB')).astype(int)
+def load_blue(path):
+    """Pixels bleus du logo et leur couleur mediane."""
+    im = np.asarray(Image.open(path).convert('RGB')).astype(int)
     blue = (im[:, :, 2] > 180) & (im[:, :, 0] < 150) & (im[:, :, 2] - im[:, :, 0] > 80)
     color = np.median(im[blue], axis=0).round().astype(int)
+    return blue, color
+
+
+def rays(mask, cx, cy, px):
+    """Contour dense : le point plein le plus lointain sur chaque rayon, sous-pixel."""
+    mh, mw = mask.shape
+    out = []
+    for k in range(RAYS):
+        a = 2 * math.pi * k / RAYS
+        dx, dy = math.cos(a), math.sin(a)
+        r, last = 0.0, 0.0
+        while r < max(mw, mh):
+            x, y = int(round(cx + dx * r)), int(round(cy + dy * r))
+            if 0 <= x < mw and 0 <= y < mh and mask[y, x]:
+                last = r
+            r += 0.25
+        out.append(((dx * last) / px, (dy * last) / px))
+    return out
+
+
+def eyes_of(head, cx, cy, px):
+    """Yeux : les trous fermes dans la tete, en ellipses pleines de gauche a droite."""
+    holes = ndimage.binary_fill_holes(head) & ~head
+    hl, hn = ndimage.label(holes)
+    eyes = []
+    for i in range(1, hn + 1):
+        m = hl == i
+        if m.sum() < 200:
+            continue
+        ey, ex = np.nonzero(m)
+        mx, my = ex.mean(), ey.mean()
+        cov = np.cov(np.vstack([ex - mx, ey - my]))
+        vals, vecs = np.linalg.eigh(cov)
+        major = vecs[:, 1]
+        # angle de l'axe long par rapport a la verticale, positif = le haut part a droite
+        tilt = math.degrees(math.atan2(major[0], -major[1]))
+        if tilt > 90:
+            tilt -= 180
+        if tilt < -90:
+            tilt += 180
+        # ellipse pleine : demi-axe = 2 ecarts-types
+        eyes.append(
+            {
+                'x': (mx - cx) / px,
+                'y': (my - cy) / px,
+                'w': 4 * math.sqrt(vals[0]) / px,
+                'h': 4 * math.sqrt(vals[1]) / px,
+                'tilt': tilt,
+            }
+        )
+    eyes.sort(key=lambda e: e['x'])
+    return eyes
+
+
+f = lambda v: f'{v:.4f}'
+pts = lambda P: ',\n  '.join(f'{{ x: {f(x)}, y: {f(y)} }}' for x, y in P)
+
+
+def print_eyes(name):
+    print('/** Yeux du logo, de gauche a droite. `w`/`h` = diametres, `tilt` en degres. */')
+    print(f'export const {name} = [')
+    for e in EYES:
+        print(
+            f"  {{ x: {f(e['x'])}, y: {f(e['y'])}, w: {f(e['w'])}, h: {f(e['h'])}, tilt: {e['tilt']:.1f} }},"
+        )
+    print('] as const')
+
+
+def main_no_mouth():
+    """Variante sans bouche : un seul morceau, la silhouette est la tete elle-meme."""
+    global EYES
+    blue, color = load_blue(SOURCE_NO_MOUTH)
+    labels, count = ndimage.label(blue)
+    sizes = ndimage.sum(blue, labels, range(1, count + 1))
+    head = labels == (int(np.argmax(sizes)) + 1)
+    full = ndimage.binary_fill_holes(head)
+    ys, xs = np.nonzero(full)
+    cx, cy = xs.mean(), ys.mean()
+    px = math.sqrt(full.sum() / math.pi) / AREA_R
+    outline = rays(full, cx, cy, px)
+    EYES = eyes_of(head, cx, cy, px)
+    hexc = '#' + ''.join(f'{c:02x}' for c in color)
+
+    print('// Tete Snack sans bouche, relevee au pixel (tools/snack-no-mouth-reference.png).')
+    print('// Repere : centre = centroide de la silhouette, y vers le bas.')
+    print(f'// Unite : la silhouette a l\'aire d\'un disque de rayon {AREA_R}.')
+    print('//')
+    print('// Genere par tools/extract-snack.py --no-mouth — ne pas editer a la main.')
+    print()
+    print("import type { Point } from './shape'")
+    print()
+    print(f'/** Couleur relevee : {hexc}, la meme que `SNACK_BLUE` a l\'arrondi pres. */')
+    print()
+    print('/** Contour exterieur de la silhouette. */')
+    print(f'export const SNACK_NO_MOUTH_OUTLINE: Point[] = [\n  {pts(outline)}\n]')
+    print()
+    print_eyes('SNACK_NO_MOUTH_EYES')
+
+
+def main():
+    global EYES
+    blue, color = load_blue(SOURCE)
 
     labels, count = ndimage.label(blue)
     sizes = ndimage.sum(blue, labels, range(1, count + 1))
@@ -100,23 +209,7 @@ def main():
     cx, cy = xs.mean(), ys.mean()
     px = math.sqrt(area / math.pi) / AREA_R
 
-    def rays(mask):
-        """Contour dense : le point plein le plus lointain sur chaque rayon, sous-pixel."""
-        mh, mw = mask.shape
-        out = []
-        for k in range(RAYS):
-            a = 2 * math.pi * k / RAYS
-            dx, dy = math.cos(a), math.sin(a)
-            r, last = 0.0, 0.0
-            while r < max(mw, mh):
-                x, y = int(round(cx + dx * r)), int(round(cy + dy * r))
-                if 0 <= x < mw and 0 <= y < mh and mask[y, x]:
-                    last = r
-                r += 0.25
-            out.append(((dx * last) / px, (dy * last) / px))
-        return out
-
-    outline = rays(full)
+    outline = rays(full, cx, cy, px)
 
     # machoire ouverte : meme repere et meme echelle que la silhouette fermee, sur un
     # canevas agrandi vers le bas pour qu'elle ne sorte pas de l'image
@@ -124,10 +217,10 @@ def main():
     pivot = (jx.mean(), jy.mean())
     pad = JAW_DROP * 2
     open_outlines = []
-    for f in JAW_STEPS:
-        th = math.radians(JAW_TILT * f)
+    for step in JAW_STEPS:
+        th = math.radians(JAW_TILT * step)
         c, s = math.cos(th), math.sin(th)
-        d = JAW_DROP * f
+        d = JAW_DROP * step
         big_jaw = np.zeros((h + pad, w), bool)
         big_jaw[:h] = jaw
         m = np.array([[c, -s], [s, c]])
@@ -137,7 +230,7 @@ def main():
         big_head = np.zeros_like(moved)
         big_head[:h] = head
         gap, _, _ = fill_gap(big_head, moved)
-        open_outlines.append(rays(big_head | moved | gap))
+        open_outlines.append(rays(big_head | moved | gap, cx, cy, px))
 
     # bouche : bord haut de gauche a droite, bord bas de droite a gauche,
     # prolongee horizontalement au-dela du contour des deux cotes
@@ -149,39 +242,7 @@ def main():
     top = unit(rdp(extend(top_edge), RDP_EPS))
     bottom = unit(rdp(extend(bottom_edge), RDP_EPS))
 
-    # yeux : les trous fermes dans la tete
-    holes = ndimage.binary_fill_holes(head) & ~head
-    hl, hn = ndimage.label(holes)
-    eyes = []
-    for i in range(1, hn + 1):
-        m = hl == i
-        if m.sum() < 200:
-            continue
-        ey, ex = np.nonzero(m)
-        mx, my = ex.mean(), ey.mean()
-        cov = np.cov(np.vstack([ex - mx, ey - my]))
-        vals, vecs = np.linalg.eigh(cov)
-        major = vecs[:, 1]
-        # angle de l'axe long par rapport a la verticale, positif = le haut part a droite
-        tilt = math.degrees(math.atan2(major[0], -major[1]))
-        if tilt > 90:
-            tilt -= 180
-        if tilt < -90:
-            tilt += 180
-        # ellipse pleine : demi-axe = 2 ecarts-types
-        eyes.append(
-            {
-                'x': (mx - cx) / px,
-                'y': (my - cy) / px,
-                'w': 4 * math.sqrt(vals[0]) / px,
-                'h': 4 * math.sqrt(vals[1]) / px,
-                'tilt': tilt,
-            }
-        )
-    eyes.sort(key=lambda e: e['x'])
-
-    f = lambda v: f'{v:.4f}'
-    pts = lambda P: ',\n  '.join(f'{{ x: {f(x)}, y: {f(y)} }}' for x, y in P)
+    EYES = eyes_of(head, cx, cy, px)
     hexc = '#' + ''.join(f'{c:02x}' for c in color)
 
     print('// Tete Snack relevee au pixel sur le logo (tools/snack-logo-reference.png).')
@@ -221,14 +282,7 @@ def main():
         print(f'  {{\n    open: {fr:.4f},\n    outline: [\n      {pts(o).replace(chr(10) + "  ", chr(10) + "      ")}\n    ]\n  }},')
     print(']')
     print()
-    print('/** Yeux du logo, de gauche a droite. `w`/`h` = diametres, `tilt` en degres. */')
-    print('export const SNACK_EYES = [')
-    for e in eyes:
-        print(
-            f"  {{ x: {f(e['x'])}, y: {f(e['y'])}, w: {f(e['w'])}, h: {f(e['h'])}, tilt: {e['tilt']:.1f} }},"
-        )
-    print('] as const')
-
+    print_eyes('SNACK_EYES')
 
 if __name__ == '__main__':
-    main()
+    main_no_mouth() if '--no-mouth' in sys.argv[1:] else main()

@@ -34,7 +34,7 @@ export interface BotFrame {
   arcs: ArcRender[]
   notif: { x: number; y: number; r: number } | null
   notch: { x: number; y: number; r: number } | null
-  /** trou de la bouche, pour les formes qui en portent une (la tete Snack) */
+  /** trou de la bouche, pour les formes qui en portent une (la tete Snack du logo) */
   mouth: { d: string; alpha: number } | null
 }
 
@@ -302,7 +302,7 @@ export class BotEngine {
       pose = { ...pose, sil: { ...pose.sil, radii: profil(pose, shape) } }
     }
     if (def.headPose && shape && tete && tete.w > 0) {
-      const tetePose = def.headPose(t)
+      const tetePose = def.headPose(t, tete.head)
       const sur = { ...tetePose, sil: { ...tetePose.sil, radii: profil(tetePose, shape) } }
       pose = tete.w >= 1 ? sur : blendPose(pose, sur, tete.w)
     }
@@ -603,10 +603,10 @@ export class BotEngine {
         // Le clignement s'applique APRES tout ca : c'est un ecrasement vertical
         // a l'ecran, pas le long de l'axe de la gelule.
         const k = blinkScale(Math.min(lid, cfg.open))
-        // Sur une tete, un oeil plus grand que le neutre grandit vers le haut, son bas
-        // remontant meme un peu : la bouche est juste en dessous, et grandir depuis le
-        // centre l'y ferait entrer.
-        const pousse = ancre
+        // Sur une tete a bouche, un oeil plus grand que le neutre grandit vers le haut, son
+        // bas remontant meme un peu : la bouche est juste en dessous, et grandir depuis le
+        // centre l'y ferait entrer. Sans bouche, il grandit depuis son centre.
+        const pousse = ancre && tete?.head.mouth
           ? Math.max(0, cfg.h - EYE_H * lerp(1, ancre.h, poids)) * poids * R
           : 0
         const tx = e.x * fit + (offX + decalage.x + pose.eyeShift.x) * R - cx2 * pousse
@@ -633,8 +633,8 @@ export class BotEngine {
 
     return {
       mouth:
-        tete && poids > 0.01
-          ? { d: polyPath(transformPoints(mouthOf(tete.head, pose.jaw), sil, R)), alpha: poids }
+        tete?.head.mouth && poids > 0.01
+          ? { d: polyPath(transformPoints(mouthOf(tete.head.mouth, pose.jaw), sil, R)), alpha: poids }
           : null,
       bodyPath,
       bodyAlpha: pose.bodyAlpha,

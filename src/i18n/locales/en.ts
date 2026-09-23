@@ -142,7 +142,8 @@ const en: typeof fr = {
     hexagone: 'Hexagon',
     nuage: 'Cloud',
     goutte: 'Droplet',
-    snack: 'Snack head'
+    snack: 'Snack head',
+    'snack-sans-bouche': 'Snack head, no mouth'
   },
 
   colors: {
