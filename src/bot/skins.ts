@@ -1,4 +1,4 @@
-import { SNACK_HEAD, SNACK_NO_MOUTH_HEAD, type BotHead } from './head'
+import { SNACK_HEAD, SNACK_NO_MOUTH_HEAD, SNACK_SHIELD_HEAD, type BotHead } from './head'
 import { PROFILE_SAMPLES } from './profiles'
 import {
   hullOfCircles,
@@ -37,6 +37,7 @@ export type ShapeId =
   | 'goutte'
   | 'snack'
   | 'snack-sans-bouche'
+  | 'snack-bouclier'
 
 export interface BotShape {
   id: ShapeId
@@ -97,7 +98,9 @@ export const SHAPES: BotShape[] = [
   // Relevee sur le logo (`tools/extract-snack.py`), voir `head.ts`
   { id: 'snack', radii: SNACK_HEAD.radii, head: SNACK_HEAD },
   // Relevee sur la variante sans bouche (`tools/extract-snack.py --no-mouth`)
-  { id: 'snack-sans-bouche', radii: SNACK_NO_MOUTH_HEAD.radii, head: SNACK_NO_MOUTH_HEAD }
+  { id: 'snack-sans-bouche', radii: SNACK_NO_MOUTH_HEAD.radii, head: SNACK_NO_MOUTH_HEAD },
+  // Relevee sur la variante bouclier (`tools/extract-snack.py --shield`)
+  { id: 'snack-bouclier', radii: SNACK_SHIELD_HEAD.radii, head: SNACK_SHIELD_HEAD }
 ]
 
 // Map indexee par `string` et non par `ShapeId` : les appelants interrogent avec

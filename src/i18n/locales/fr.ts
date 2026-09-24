@@ -168,7 +168,8 @@ export default {
     nuage: 'Nuage',
     goutte: 'Goutte',
     snack: 'Tête Snack',
-    'snack-sans-bouche': 'Tête Snack sans bouche'
+    'snack-sans-bouche': 'Tête Snack sans bouche',
+    'snack-bouclier': 'Tête Snack bouclier'
   },
 
   colors: {

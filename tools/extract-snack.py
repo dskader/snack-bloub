@@ -19,6 +19,12 @@ Usage :
 
 `--no-mouth` releve la variante sans bouche (tools/snack-no-mouth-reference.png) :
 un seul morceau, donc ni bouche ni machoire, seulement la silhouette et les yeux.
+
+    python3 tools/extract-snack.py --shield > src/bot/snack-shield.ts
+
+`--shield` releve la variante bouclier (tools/snack-shield-reference.png) : symetrique,
+sans bouche ni yeux dessines, seulement la silhouette. Son visage est donc CHOISI dans
+`head.ts`, pas ajuste sur l'image.
 """
 import math
 import sys
@@ -29,6 +35,11 @@ from scipy import ndimage
 
 SOURCE = 'tools/snack-logo-reference.png'
 SOURCE_NO_MOUTH = 'tools/snack-no-mouth-reference.png'
+SOURCE_SHIELD = 'tools/snack-shield-reference.png'
+# Le bouclier est un petit export (213 x 241) anticrenele : on releve son alpha agrandi
+# SHIELD_UPSCALE fois, seuille a mi-hauteur, pour un bord sous-pixel. Le masque par
+# couleur compterait chaque pixel de bord partiellement couvert comme plein.
+SHIELD_UPSCALE = 4
 # Rayon de la boule equivalente : la silhouette pleine est mise a l'echelle pour
 # avoir l'aire d'un disque de ce rayon, en unites de boule.
 AREA_R = 1.0
@@ -171,6 +182,37 @@ def main_no_mouth():
     print_eyes('SNACK_NO_MOUTH_EYES')
 
 
+def main_shield():
+    """Variante bouclier : un seul morceau sans trou, ni bouche ni yeux."""
+    src = Image.open(SOURCE_SHIELD).convert('RGBA')
+    rgba = np.asarray(src).astype(int)
+    opaque = rgba[:, :, 3] == 255
+    color = np.median(rgba[opaque][:, :3], axis=0).round().astype(int)
+    size = (src.width * SHIELD_UPSCALE, src.height * SHIELD_UPSCALE)
+    alpha = np.asarray(src.getchannel('A').resize(size, Image.BILINEAR))
+    labels, count = ndimage.label(alpha >= 128)
+    sizes = ndimage.sum(alpha >= 128, labels, range(1, count + 1))
+    full = ndimage.binary_fill_holes(labels == (int(np.argmax(sizes)) + 1))
+    ys, xs = np.nonzero(full)
+    cx, cy = xs.mean(), ys.mean()
+    px = math.sqrt(full.sum() / math.pi) / AREA_R
+    outline = rays(full, cx, cy, px)
+    hexc = '#' + ''.join(f'{c:02x}' for c in color)
+
+    print('// Tete Snack bouclier, relevee au pixel (tools/snack-shield-reference.png).')
+    print('// Repere : centre = centroide de la silhouette, y vers le bas.')
+    print(f'// Unite : la silhouette a l\'aire d\'un disque de rayon {AREA_R}.')
+    print('//')
+    print('// Genere par tools/extract-snack.py --shield — ne pas editer a la main.')
+    print()
+    print("import type { Point } from './shape'")
+    print()
+    print(f'/** Couleur relevee : {hexc}, la meme que `SNACK_BLUE` a l\'arrondi pres. */')
+    print()
+    print('/** Contour exterieur de la silhouette. Le dessin n\'a ni bouche ni yeux. */')
+    print(f'export const SNACK_SHIELD_OUTLINE: Point[] = [\n  {pts(outline)}\n]')
+
+
 def main():
     global EYES
     blue, color = load_blue(SOURCE)
@@ -285,4 +327,10 @@ def main():
     print_eyes('SNACK_EYES')
 
 if __name__ == '__main__':
-    main_no_mouth() if '--no-mouth' in sys.argv[1:] else main()
+    args = sys.argv[1:]
+    if '--shield' in args:
+        main_shield()
+    elif '--no-mouth' in args:
+        main_no_mouth()
+    else:
+        main()

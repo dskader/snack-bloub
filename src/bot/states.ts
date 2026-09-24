@@ -554,7 +554,7 @@ const fromMouth = (mouth: HeadMouth) => {
 }
 /** Sans bouche, du bas de la face. */
 const fromChin = (u: number) => ({ x: (u * 2 - 1) * 0.55, y: 0.35 })
-/** Sur la tete sans bouche, du bas du cote ou elle regarde. */
+/** Sur une tete sans bouche, du bas de la joue, du cote du biscuit. */
 const fromCheek = (u: number) => ({ x: 0.1 + u * 0.6, y: 0.3 })
 
 /** Yeux pendant `chomp` : un peu plus grands a l'ouverture, plisses au claquement. */
@@ -612,7 +612,7 @@ export const STATES: StateDef[] = [
      * Snack croque : trois bouchees qui s'ouvrent, tiennent et claquent, des miettes a
      * chaque claquement, puis une mastication satisfaite. Pas un etat de la video : il
      * est CHOISI, pour la tete Snack dont la machoire s'ouvre vraiment. Sur une autre
-     * forme, et sur la tete sans bouche, le corps s'etire et s'ecrase a la place.
+     * forme, et sur les tetes sans bouche, le corps s'etire et s'ecrase a la place.
      */
     id: 'chomp',
     duration: 2.6,

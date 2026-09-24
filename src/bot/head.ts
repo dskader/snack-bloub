@@ -9,11 +9,13 @@ import {
   SNACK_OUTLINE_OPEN
 } from './snack'
 import { SNACK_NO_MOUTH_OUTLINE } from './snack-no-mouth'
+import { SNACK_SHIELD_OUTLINE } from './snack-shield'
 
 /**
  * Une TETE : une forme du personnalisateur qui porte son propre visage, et parfois
- * une bouche percee dans le corps avec une machoire qui s'ouvre. Les deux tetes
- * Snack en sont : le logo, avec sa bouche en zigzag, et sa variante sans bouche.
+ * une bouche percee dans le corps avec une machoire qui s'ouvre. Les trois tetes
+ * Snack en sont : le logo, avec sa bouche en zigzag, et ses variantes sans bouche
+ * (tournee et bouclier).
  *
  * Tout est en unites de boule, dans le repere du profil : ce qui est perce dans le
  * corps suit donc sa rotation, son squash et son decalage.
@@ -164,5 +166,33 @@ export const SNACK_NO_MOUTH_HEAD: BotHead = {
     h: 0.248 / EYE_H,
     growth: 0.7,
     tilt: -4.6
+  }
+}
+
+/**
+ * Tete Snack bouclier : symetrique, de face, oreilles plates aux deux coins, sans bouche.
+ * Le dessin n'a pas d'yeux, le visage est donc CHOISI et non ajuste : hauteur et taille
+ * des yeux reprises de la tete sans bouche (0,32 de la hauteur depuis le haut, 0,155 x
+ * 0,234 a l'ecran, droits), mais plus ecartes, 0,451 entre centres et non 0,407 : de
+ * face les deux yeux sont pleine largeur, et a 0,407 ceux de `notify` et d'`excite` se
+ * touchaient. Demi-ecart 10,6deg, pitch 12,36 ; le yaw de -0,14 et le roll de 0,85 (que
+ * `tilt` redresse) ne font que rattraper l'asymetrie du dessin, residuel sous 0,0002.
+ *
+ * Sans bouche sous les yeux : meme gain que la tete sans bouche. La croissance est plus
+ * amortie (0,55 et non 0,7) pour la meme raison que l'ecart. La derive aussi (0,4 et non
+ * 0,6) : de face, les deux yeux rebroussent ensemble au bout de la derive, et a 0,6 ils
+ * comptent 4 allers-retours au repos contre 2 pour le cercle (`skins.test.ts`).
+ */
+export const SNACK_SHIELD_HEAD: BotHead = {
+  radii: profileFromPolygon(SNACK_SHIELD_OUTLINE, 0, 0),
+  face: {
+    gaze: { yaw: -0.14, pitch: 12.36, roll: 0.85 },
+    gain: 0.3,
+    wander: 0.4,
+    split: 10.6 / EYE_SPLIT,
+    w: [0.158 / EYE_W, 0.158 / EYE_W],
+    h: 0.24 / EYE_H,
+    growth: 0.55,
+    tilt: -0.85
   }
 }

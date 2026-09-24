@@ -146,7 +146,8 @@ const zh: typeof fr = {
     nuage: '云朵',
     goutte: '水滴',
     snack: 'Snack 头像',
-    'snack-sans-bouche': 'Snack 头像（无嘴）'
+    'snack-sans-bouche': 'Snack 头像（无嘴）',
+    'snack-bouclier': 'Snack 盾形头像'
   },
 
   colors: {

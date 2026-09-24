@@ -546,6 +546,11 @@ describe('changement d etat pendant un fondu', () => {
 describe('tete Snack', () => {
   const snack = SHAPE_BY_ID.get('snack')!.radii
   const sansBouche = SHAPE_BY_ID.get('snack-sans-bouche')!.radii
+  const bouclier = SHAPE_BY_ID.get('snack-bouclier')!.radii
+  const sansMachoire = [
+    ['sans bouche', sansBouche],
+    ['bouclier', bouclier]
+  ] as const
   const tete = (id: StateId) => new BotEngine(100, id, snack)
 
   it('croque vraiment : la machoire ouverte allonge la silhouette et ouvre la bouche', () => {
@@ -571,32 +576,34 @@ describe('tete Snack', () => {
     }
   })
 
-  it('sans bouche, croque sans machoire : la tete s etire puis s ecrase, sans trou', () => {
-    const e = new BotEngine(100, 'chomp', sansBouche)
-    const ferme = footprint(e.sample(0.05).bodyPath)
-    const ouvert = e.sample(0.36)
-    expect(ouvert.mouth).toBeNull()
-    expect(ouvert.eyes).toHaveLength(2)
-    // pas de machoire qui tombe : la tete s'allonge a peine
-    expect(footprint(ouvert.bodyPath).h - ferme.h).toBeGreaterThan(0.03)
-    expect(footprint(ouvert.bodyPath).h - ferme.h).toBeLessThan(0.15)
-    // le biscuit est la
-    expect(ouvert.dots.some((d) => d.color)).toBe(true)
-  })
+  for (const [nom, radii] of sansMachoire) {
+    it(`${nom}, croque sans machoire : la tete s etire puis s ecrase, sans trou`, () => {
+      const e = new BotEngine(100, 'chomp', radii)
+      const ferme = footprint(e.sample(0.05).bodyPath)
+      const ouvert = e.sample(0.36)
+      expect(ouvert.mouth).toBeNull()
+      expect(ouvert.eyes).toHaveLength(2)
+      // pas de machoire qui tombe : la tete s'allonge a peine
+      expect(footprint(ouvert.bodyPath).h - ferme.h).toBeGreaterThan(0.03)
+      expect(footprint(ouvert.bodyPath).h - ferme.h).toBeLessThan(0.15)
+      // le biscuit est la
+      expect(ouvert.dots.some((d) => d.color)).toBe(true)
+    })
 
-  it('garde la silhouette de la tete sans bouche sur les etats a variante de tete', () => {
-    const repos = footprint(new BotEngine(100, 'idle', sansBouche).sample(1).bodyPath)
-    for (const id of STATES.filter((s) => s.headPose && !s.baseBody).map((s) => s.id)) {
-      const f = new BotEngine(100, id, sansBouche).sample(POSES_TETE)
-      expect(f.eyes, id).toHaveLength(2)
-      expect(f.mouth, id).toBeNull()
-      expect(Math.abs(footprint(f.bodyPath).w - repos.w), id).toBeLessThan(0.08)
-    }
-  })
+    it(`garde la silhouette de la tete ${nom} sur les etats a variante de tete`, () => {
+      const repos = footprint(new BotEngine(100, 'idle', radii).sample(1).bodyPath)
+      for (const id of STATES.filter((s) => s.headPose && !s.baseBody).map((s) => s.id)) {
+        const f = new BotEngine(100, id, radii).sample(POSES_TETE)
+        expect(f.eyes, id).toHaveLength(2)
+        expect(f.mouth, id).toBeNull()
+        expect(Math.abs(footprint(f.bodyPath).w - repos.w), id).toBeLessThan(0.08)
+      }
+    })
+  }
 
   it('tient le decor dans le viewBox, sur la tete comme sur la boule', () => {
     for (const s of STATES) {
-      for (const radii of [snack, sansBouche, null]) {
+      for (const radii of [snack, sansBouche, bouclier, null]) {
         const e = new BotEngine(100, s.id, radii)
         for (let t = 0; t < 3; t += 0.05) {
           const f = e.sample(t)
